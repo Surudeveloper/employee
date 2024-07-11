@@ -1,30 +1,19 @@
-var express = require('express')
-const fastcsv = require('fast-csv')
+const express = require('express')
 const bodyParser = require('body-parser')
 const fileUpload = require('express-fileupload')
-const mongoose = require('mongoose')
-const path = require('path')
+const { MongoClient } = require('mongodb');
 const fs = require('fs')
-const port = 8001
+var XLSX = require("xlsx");
 
+const port = 8001
+const mongoUrl = 'mongodb+srv://sureshkumar1202028:123@cluster0.v42mwb3.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0'
 
 const app = express()
 app.use(express.static(__dirname + '/public'))
 app.set('view engine', 'ejs')
 
-app.use(express.json())
 app.use(bodyParser.json())
 app.use(fileUpload())
-
-
-mongoose.connect('mongodb://127.0.0.1:27017/test')
-    // mongoose.connect('mongodb://localhost:27017/test')
-    .then(() => {
-        console.log('db connected');
-    })
-    .catch((err) => {
-        console.log('db connection error', err);
-    })
 
 
 app.get('/', (req, res) => {
@@ -32,88 +21,51 @@ app.get('/', (req, res) => {
 })
 
 app.post('/upload', async (req, res) => {
+    const client = new MongoClient(mongoUrl);
     try {
-        console.log(req.files);
-        console.log(req.body);
+      
+        await client.connect()
+        const db = client.db('projectDB');
+        const collection = db.collection('employee');
+        console.log('Connected successfully to MongoDB server');
+
         const image = req.files.upldFile
         const filename = req.body.upldFileName
+        const filePath = `${__dirname}/public/file/${image.name}`
 
-        await image.mv(`${__dirname}/public/images/${filename}.xlsx`, async (err, data) => {
-            if (err) {
-                console.log("Error 1")
-                throw err;
+        await image.mv(filePath)
+        
+        // Read the uploaded Excel file
+        const workbook = XLSX.readFile(filePath);
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+    
+        // Convert sheet to JSON
+        const data = XLSX.utils.sheet_to_json(sheet);
+    
+        // Delete the file after reading it
+        // fs.unlinkSync(filePath);
+
+        const bulkOps = data.map(item => ({
+            updateOne: {
+                filter: { id: item.id }, // Assuming each item has a unique _id field
+                update: { $set: item },
+                upsert: true
             }
+        }));
 
-            // var empData = path.join('./public/images/', filename + '.xlsx');
-            // let stream = fs.createReadStream(empData);
-            // let csvData = [];
+        // Execute bulk operations
+        const result = await collection.bulkWrite(bulkOps);
+        console.log(result)
+        res.send('ok')
 
-            // let csvStream = fastcsv.parse().on("data", function (data) {
-            //     csvData.push({
-            //         //change series later
-            //         id: data[0],
-            //         name: data[1],
-            //         phone: data[2],
-            //         department: data[3],
-            //         designation: data[4],
-            //         salary: data[6],
-            //         bankAccount: data[7],
-            //         createddate: new Date(),
-            //         lstupdateddate: new Date()
-            //     });
-            // }).on("end", async function () {
-            //     csvData.shift(); // remove the first line: header
-            //     var a = csvData.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
-            //     if (Array.isArray(a) && a.length > 0) {
-            //         var count = 0;
-            //         await a.forEach(async function (e) {
-            //             employees.findOne({
-            //                 id: e.id
-            //             }, async function (err, doc) {
-            //                 if (!err) {
-            //                     if (doc) {
-            //                         //update
-            //                         var record = {}
-            //                         record['bankAccount'] = e.bankAccount
-            //                         await employees.update({ id: e.id }, { "$set": record })
-
-            //                     } else {
-            //                         var newEmployee = new employees({
-            //                             name: e.name,
-            //                             phone: e.phone,
-            //                             department: e.department,
-            //                             designation: e.designation,
-            //                             salary: e.salary,
-            //                             bankAccount: e.bankAccount,
-
-            //                             createddate: e.createdate,
-            //                             lstupdateddate: e.createdate,
-            //                         });
-            //                         newEmployee.save();
-            //                     }
-            //                 }
-            //             });
-            //             count++;
-            //             if (a.length == count) {
-            //                 res.render('display', { title: filename, image: image.name })
-            //                 // res.sendStatus(200);
-            //             }
-            //         });
-            //     } else {
-            //         res.send('Empty Data is Present');
-            //     }
-            // })
-            // stream.pipe(csvStream)
-
-        })
     } catch (err) {
-        console.log('error occured');
+        console.log('error occured',err);
     }
-    // res.send('ok')
-    // image.mv(`${__dirname}/public/images/${image.name}`, (err, data) => {
-    //     if (err) throw err;
-    //     res.render('display', { title: filename, image:image.name})
-    // })
+    finally{
+        await client.close();
+    }
+    
 })
 
 
